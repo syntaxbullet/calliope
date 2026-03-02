@@ -23,7 +23,7 @@ jobs:
             cmake_flags: ""
           - os: windows-11-arm
             target: aarch64-pc-windows-msvc
-            cmake_flags: ""
+            cmake_flags: "-T ClangCL"
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             cmake_flags: ""

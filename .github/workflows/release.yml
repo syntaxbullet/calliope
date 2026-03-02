@@ -31,7 +31,7 @@ jobs:
             artifact: sidecar
           - os: windows-11-arm
             target: aarch64-pc-windows-msvc
-            cmake_flags: ""
+            cmake_flags: "-T ClangCL"
             artifact: sidecar
           # Linux: CPU sidecars
           - os: ubuntu-22.04

@@ -69,14 +69,23 @@ jobs:
         if: runner.os == 'Windows'
         run: npm install
 
-      - name: Build Tauri app
+      - name: Build Tauri app (Windows)
+        if: runner.os == 'Windows'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_CLI_CONFIG: ${{ runner.os == 'Windows' && '{"build":{"beforeBuildCommand":"npm run build"}}' || '' }}
+        with:
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.windows-ci.conf.json
+          tauriScript: npx tauri
+
+      - name: Build Tauri app
+        if: runner.os != 'Windows'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: --target ${{ matrix.target }}
-          tauriScript: ${{ runner.os == 'Windows' && 'npx tauri' || 'bun tauri' }}
+          tauriScript: bun tauri
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

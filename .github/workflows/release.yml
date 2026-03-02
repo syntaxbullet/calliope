@@ -22,7 +22,7 @@ jobs:
             artifact: sidecar
           - os: macos-latest
             target: x86_64-apple-darwin
-            cmake_flags: "-DCMAKE_OSX_ARCHITECTURES=x86_64 -DGGML_METAL=ON"
+            cmake_flags: "-DCMAKE_OSX_ARCHITECTURES=x86_64 -DGGML_METAL=ON -DGGML_NATIVE=OFF"
             artifact: sidecar
           # Windows: CPU sidecars
           - os: windows-latest

@@ -298,59 +298,25 @@ fn stop_and_transcribe(app: &AppHandle) {
             if joined.is_empty() { None } else { Some(joined) }
         };
 
-        // Run synchronous whisper inference on a dedicated thread with a large stack.
-        // spawn_blocking uses ~2 MB stack which is insufficient for large whisper models.
+        // Run whisper-cli subprocess on a dedicated thread.
         let app_for_blocking = app_handle.clone();
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<crate::whisper::TranscriptionResult, String>>();
         std::thread::Builder::new()
             .name("whisper-inference".into())
-            .stack_size(64 * 1024 * 1024) // 64 MB
             .spawn(move || {
                 log::debug!("[PTT] whisper-inference thread started");
                 let whisper_state = app_for_blocking.state::<WhisperState>();
-                let mut guard = match whisper_state.0.lock() {
-                    Ok(g) => g,
-                    Err(e) => {
-                        log::error!("[PTT] WhisperState mutex poisoned: {e}");
-                        let _ = tx.send(Err("WhisperState mutex poisoned".into()));
-                        return;
-                    }
-                };
+                let binary_path = whisper_state.binary_path.lock().unwrap().clone();
+                let cli = crate::whisper::WhisperCli::new(binary_path);
 
-                let needs_load = match guard.as_ref() {
-                    Some((loaded_name, loaded_gpu, _, count)) => {
-                        loaded_name != &model_name
-                            || *loaded_gpu != use_gpu
-                            || *count >= WhisperState::MAX_INFERENCES_BEFORE_RELOAD
-                    }
-                    None => true,
-                };
-
-                if needs_load {
-                    let reason = if guard.as_ref().map_or(false, |(_, _, _, c)| *c >= WhisperState::MAX_INFERENCES_BEFORE_RELOAD) {
-                        "periodic refresh"
-                    } else {
-                        "initial load or config change"
-                    };
-                    log::debug!("[PTT] loading whisper model: {model_path_str} (gpu={use_gpu}, reason={reason})");
-                    match crate::whisper::inner::WhisperEngine::load(&model_path_str, use_gpu) {
-                        Ok(engine) => {
-                            log::debug!("[PTT] model loaded successfully");
-                            *guard = Some((model_name, use_gpu, engine, 0));
-                        }
-                        Err(e) => {
-                            log::error!("[PTT] model load failed: {e}");
-                            let _ = tx.send(Err(e.to_string()));
-                            return;
-                        }
-                    }
-                }
-
-                log::debug!("[PTT] starting transcription...");
-                let entry = guard.as_mut().unwrap();
-                entry.3 += 1; // increment inference count
-                let engine = &mut entry.2;
-                let result = engine.transcribe(&samples, lang_opt.as_deref(), effective_prompt.as_deref()).map_err(|e| e.to_string());
+                log::debug!("[PTT] starting transcription via whisper-cli...");
+                let result = cli.transcribe(
+                    &samples,
+                    &model_path_str,
+                    lang_opt.as_deref(),
+                    effective_prompt.as_deref(),
+                    use_gpu,
+                ).map_err(|e| e.to_string());
                 log::debug!("[PTT] transcription done, success={}", result.is_ok());
                 let _ = tx.send(result);
             })

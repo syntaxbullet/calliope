@@ -116,13 +116,10 @@ jobs:
           name: whisper-cli-${{ matrix.target }}
           path: src-tauri/binaries/
 
-      - name: Rename sidecar binary to Tauri convention
+      - name: Prepare sidecar binary
         run: |
           cd src-tauri/binaries
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            mv whisper-cli-${{ matrix.target }}.exe whisper-cli-${{ matrix.target }}.exe
-          else
-            mv whisper-cli-${{ matrix.target }} whisper-cli-${{ matrix.target }}
+          if [ "${{ runner.os }}" != "Windows" ]; then
             chmod +x whisper-cli-${{ matrix.target }}
           fi
         shell: bash

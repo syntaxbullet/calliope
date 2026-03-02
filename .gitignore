@@ -6,6 +6,9 @@ dist/
 dist-ssr/
 src-tauri/target/
 
+# Sidecar binaries (downloaded by CI)
+src-tauri/binaries/
+
 # Logs
 *.log
 npm-debug.log*

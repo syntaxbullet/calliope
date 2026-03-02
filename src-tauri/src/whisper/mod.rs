@@ -1,10 +1,11 @@
-/// Whisper inference module.
+/// Whisper inference via whisper-cli subprocess.
 ///
-/// The actual whisper-rs integration is gated behind the `whisper` feature flag
-/// to allow the project to compile without whisper.cpp during early development.
-/// Enable with: `cargo build --features whisper`
+/// Writes audio samples to a temporary WAV file, invokes the whisper-cli binary,
+/// and parses the JSON output.
 
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptionResult {
@@ -23,101 +24,132 @@ pub enum WhisperError {
     InferenceFailed(String),
 }
 
-#[cfg(feature = "whisper")]
-pub mod inner {
-    use super::*;
-    use std::path::Path;
-    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
-
-    pub struct WhisperEngine {
-        ctx: WhisperContext,
-    }
-
-    impl WhisperEngine {
-        pub fn load(model_path: &str, use_gpu: bool) -> Result<Self, WhisperError> {
-            if !Path::new(model_path).exists() {
-                return Err(WhisperError::ModelNotFound(model_path.to_string()));
-            }
-            let backend = if !use_gpu {
-                "CPU (GPU disabled)"
-            } else if cfg!(feature = "metal") { "Metal" }
-            else if cfg!(feature = "cuda") { "CUDA" }
-            else if cfg!(feature = "rocm") { "ROCm" }
-            else if cfg!(feature = "coreml") { "CoreML" }
-            else { "CPU" };
-            log::info!("Whisper backend: {backend}");
-            let mut params = WhisperContextParameters::default();
-            params.use_gpu(use_gpu);
-            let ctx = WhisperContext::new_with_params(model_path, params)
-            .map_err(|e| WhisperError::InferenceFailed(e.to_string()))?;
-            Ok(Self { ctx })
-        }
-
-        pub fn transcribe(
-            &mut self,
-            samples: &[f32],
-            language: Option<&str>,
-            prompt: Option<&str>,
-        ) -> Result<TranscriptionResult, WhisperError> {
-            let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-            if let Some(lang) = language {
-                params.set_language(Some(lang));
-            }
-            if let Some(p) = prompt {
-                if !p.is_empty() {
-                    params.set_initial_prompt(p);
-                }
-            }
-
-            let start = std::time::Instant::now();
-            let mut state = self.ctx.create_state()
-                .map_err(|e| WhisperError::InferenceFailed(e.to_string()))?;
-            state
-                .full(params, samples)
-                .map_err(|e| WhisperError::InferenceFailed(e.to_string()))?;
-
-            let mut text = String::new();
-            for segment in state.as_iter() {
-                if let Ok(s) = segment.to_str() {
-                    text.push_str(s);
-                }
-            }
-
-            let lang_id = state.full_lang_id_from_state();
-            let language = whisper_rs::get_lang_str(lang_id)
-                .unwrap_or("")
-                .to_string();
-
-            Ok(TranscriptionResult {
-                text: text.trim().to_string(),
-                language,
-                duration_ms: start.elapsed().as_millis() as u64,
-            })
-        }
-    }
+pub struct WhisperCli {
+    binary_path: PathBuf,
 }
 
-// Stub when whisper feature is disabled
-#[cfg(not(feature = "whisper"))]
-pub mod inner {
-    use super::*;
+impl WhisperCli {
+    pub fn new(binary_path: PathBuf) -> Self {
+        Self { binary_path }
+    }
 
-    pub struct WhisperEngine;
+    /// Write f32 samples (16kHz mono) to a temporary 16-bit PCM WAV file.
+    fn write_wav(samples: &[f32], path: &Path) -> Result<(), WhisperError> {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path, spec)
+            .map_err(|e| WhisperError::InferenceFailed(format!("WAV write error: {e}")))?;
+        for &s in samples {
+            let clamped = s.clamp(-1.0, 1.0);
+            let val = (clamped * 32767.0) as i16;
+            writer
+                .write_sample(val)
+                .map_err(|e| WhisperError::InferenceFailed(format!("WAV sample error: {e}")))?;
+        }
+        writer
+            .finalize()
+            .map_err(|e| WhisperError::InferenceFailed(format!("WAV finalize error: {e}")))?;
+        Ok(())
+    }
 
-    impl WhisperEngine {
-        pub fn load(_model_path: &str, _use_gpu: bool) -> Result<Self, WhisperError> {
-            Err(WhisperError::InferenceFailed(
-                "whisper feature not enabled; rebuild with --features whisper".into(),
-            ))
+    pub fn transcribe(
+        &self,
+        samples: &[f32],
+        model_path: &str,
+        language: Option<&str>,
+        prompt: Option<&str>,
+        use_gpu: bool,
+    ) -> Result<TranscriptionResult, WhisperError> {
+        if !Path::new(model_path).exists() {
+            return Err(WhisperError::ModelNotFound(model_path.to_string()));
         }
 
-        pub fn transcribe(
-            &mut self,
-            _samples: &[f32],
-            _language: Option<&str>,
-            _prompt: Option<&str>,
-        ) -> Result<TranscriptionResult, WhisperError> {
-            Err(WhisperError::NoModel)
+        let tmp_dir = tempfile::tempdir()
+            .map_err(|e| WhisperError::InferenceFailed(format!("temp dir error: {e}")))?;
+        let wav_path = tmp_dir.path().join("audio.wav");
+        let out_base = tmp_dir.path().join("result");
+
+        Self::write_wav(samples, &wav_path)?;
+
+        let start = std::time::Instant::now();
+
+        let mut cmd = Command::new(&self.binary_path);
+        cmd.arg("-m").arg(model_path)
+            .arg("-f").arg(&wav_path)
+            .arg("-oj") // output JSON
+            .arg("-of").arg(&out_base); // output file base
+
+        if let Some(lang) = language {
+            if lang != "auto" {
+                cmd.arg("-l").arg(lang);
+            }
         }
+
+        if let Some(p) = prompt {
+            if !p.is_empty() {
+                cmd.arg("--prompt").arg(p);
+            }
+        }
+
+        if !use_gpu {
+            cmd.arg("--no-gpu");
+        }
+
+        log::info!("running whisper-cli: {:?}", cmd);
+
+        let output = cmd.output().map_err(|e| {
+            WhisperError::InferenceFailed(format!("failed to spawn whisper-cli: {e}"))
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(WhisperError::InferenceFailed(format!(
+                "whisper-cli exited with {}: {stderr}",
+                output.status
+            )));
+        }
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        // whisper-cli writes <out_base>.json
+        let json_path = out_base.with_extension("json");
+        let json_str = std::fs::read_to_string(&json_path).map_err(|e| {
+            WhisperError::InferenceFailed(format!("failed to read output JSON: {e}"))
+        })?;
+
+        Self::parse_output(&json_str, duration_ms)
+    }
+
+    fn parse_output(json_str: &str, duration_ms: u64) -> Result<TranscriptionResult, WhisperError> {
+        let val: serde_json::Value = serde_json::from_str(json_str)
+            .map_err(|e| WhisperError::InferenceFailed(format!("JSON parse error: {e}")))?;
+
+        // whisper-cli JSON format: { "transcription": [{ "text": "..." }], "result": { "language": "en" } }
+        let text = val["transcription"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|seg| seg["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        let language = val["result"]["language"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        Ok(TranscriptionResult {
+            text,
+            language,
+            duration_ms,
+        })
     }
 }

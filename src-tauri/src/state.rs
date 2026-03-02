@@ -61,13 +61,9 @@ pub struct ActiveBufferState(pub Arc<Mutex<Vec<f32>>>);
 /// Sample rate of the active recording stream.
 pub struct ActiveSampleRate(pub Mutex<u32>);
 
-/// Cached Whisper model engine: (model_name, use_gpu, engine, inference_count).
-/// The engine is reloaded every MAX_INFERENCES_BEFORE_RELOAD runs to prevent
-/// quality degradation from accumulated whisper.cpp internal state.
-pub struct WhisperState(pub Mutex<Option<(String, bool, crate::whisper::inner::WhisperEngine, u32)>>);
-
-impl WhisperState {
-    pub const MAX_INFERENCES_BEFORE_RELOAD: u32 = 10;
+/// Path to the whisper-cli binary used for transcription.
+pub struct WhisperState {
+    pub binary_path: Mutex<std::path::PathBuf>,
 }
 
 /// Lock-free current RMS audio level, updated by the audio callback.

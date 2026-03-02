@@ -32,7 +32,7 @@ impl WindowsInjector {
 
             let result = (|| -> Result<(), String> {
                 let automation: IUIAutomation =
-                    windows::Win32::System::Com::CoCreateInstance::<IUIAutomation>(
+                    windows::Win32::System::Com::CoCreateInstance(
                         &CUIAutomation,
                         None,
                         windows::Win32::System::Com::CLSCTX_INPROC_SERVER,

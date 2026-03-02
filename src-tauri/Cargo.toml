@@ -35,6 +35,8 @@ enigo = "0.2"
 tauri-plugin-autostart = "2.5.1"
 sha2 = "0.10"
 futures-util = "0.3"
+hound = "3"
+tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
@@ -51,15 +53,3 @@ windows = { version = "0.58", features = [
 atspi = "0.5"
 zbus = "4"
 
-# Whisper inference — optional to allow compilation before model weights are present
-[features]
-default = []
-whisper = ["dep:whisper-rs"]
-metal = ["whisper", "whisper-rs/metal"]
-cuda = ["whisper", "whisper-rs/cuda"]
-rocm = ["whisper", "whisper-rs/hipblas"]
-coreml = ["whisper", "whisper-rs/coreml"]
-
-[dependencies.whisper-rs]
-version = "0.15"
-optional = true

@@ -183,3 +183,152 @@ pub fn delete_model_file(app: &AppHandle, name: &str) -> Result<(), String> {
     }
     Ok(())
 }
+
+// ── whisper-cli binary management ─────────────────────────────────────────────
+
+/// Detect the best GPU backend available at runtime.
+pub fn detect_gpu_backend() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        return "Metal".into();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Check for NVIDIA GPU (works on both Windows and Linux)
+        if std::process::Command::new("nvidia-smi")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            return "CUDA".into();
+        }
+
+        // Check for Vulkan support
+        if detect_vulkan() {
+            return "Vulkan".into();
+        }
+
+        "CPU".into()
+    }
+}
+
+/// Check if Vulkan is available on the system.
+#[cfg(not(target_os = "macos"))]
+fn detect_vulkan() -> bool {
+    // Try vulkaninfo command first
+    if std::process::Command::new("vulkaninfo")
+        .arg("--summary")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    // Check for Vulkan loader library
+    #[cfg(target_os = "windows")]
+    {
+        // vulkan-1.dll is present if the Vulkan runtime is installed
+        let sys32 = std::path::PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()))
+            .join("System32")
+            .join("vulkan-1.dll");
+        if sys32.exists() {
+            return true;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        for path in &["/usr/lib/x86_64-linux-gnu/libvulkan.so.1", "/usr/lib64/libvulkan.so.1", "/usr/lib/libvulkan.so.1"] {
+            if std::path::Path::new(path).exists() {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Path to the bin directory for downloaded whisper-cli binaries.
+fn bin_dir(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_data_dir()
+        .expect("app data dir unavailable")
+        .join("bin")
+}
+
+/// Returns the download URL for a GPU-accelerated whisper-cli binary.
+/// These are hosted on the Calliope GitHub releases.
+fn gpu_binary_url(backend: &str) -> Result<String, String> {
+    let base = "https://github.com/syntaxbullet/calliope/releases/latest/download";
+
+    let filename = match (std::env::consts::OS, std::env::consts::ARCH, backend) {
+        ("macos", _, "Metal") => {
+            // Metal is bundled as the sidecar on macOS — no download needed
+            return Err("Metal binary is already bundled on macOS".into());
+        }
+        ("windows", "x86_64", "CUDA") => "whisper-cli-cuda-x86_64-pc-windows-msvc.exe",
+        ("windows", "x86_64", "Vulkan") => "whisper-cli-vulkan-x86_64-pc-windows-msvc.exe",
+        ("linux", "x86_64", "CUDA") => "whisper-cli-cuda-x86_64-unknown-linux-gnu",
+        ("linux", "x86_64", "Vulkan") => "whisper-cli-vulkan-x86_64-unknown-linux-gnu",
+        _ => return Err(format!("no GPU binary available for {}/{}/{backend}", std::env::consts::OS, std::env::consts::ARCH)),
+    };
+
+    Ok(format!("{base}/{filename}"))
+}
+
+/// Download a GPU-accelerated whisper-cli binary, emitting progress events.
+pub async fn download_gpu_whisper_cli(app: &AppHandle, backend: &str) -> Result<(), String> {
+    let url = gpu_binary_url(backend)?;
+    let dir = bin_dir(app);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let bin_name = if cfg!(target_os = "windows") { "whisper-cli.exe" } else { "whisper-cli" };
+    let dest = dir.join(bin_name);
+
+    log::info!("downloading GPU whisper-cli ({backend}) from {url}");
+
+    let response = reqwest::get(&url).await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("download failed: HTTP {}", response.status()));
+    }
+    let total = response.content_length().unwrap_or(0);
+    let mut bytes_downloaded: u64 = 0;
+    let mut stream = response.bytes_stream();
+
+    let mut file = tokio::fs::File::create(&dest)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        bytes_downloaded += chunk.len() as u64;
+        let _ = app.emit(
+            "download-progress",
+            DownloadProgress {
+                name: format!("whisper-cli-{backend}"),
+                bytes_downloaded,
+                total_bytes: total,
+            },
+        );
+    }
+
+    file.flush().await.map_err(|e| e.to_string())?;
+
+    // Make executable on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| e.to_string())?;
+    }
+
+    log::info!("GPU whisper-cli ({backend}) installed to {}", dest.display());
+    Ok(())
+}

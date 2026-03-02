@@ -28,7 +28,7 @@ pub fn run() {
         .manage(AppStateManager::new())
         .manage(ActiveStreamState(Mutex::new(None)))
         .manage(ActiveBufferState(Arc::new(Mutex::new(Vec::new()))))
-        .manage(WhisperState(Mutex::new(None)))
+        .manage(WhisperState { binary_path: Mutex::new(std::path::PathBuf::new()) })
         .manage(ActiveSampleRate(Mutex::new(16_000)))
         .manage(CurrentAudioLevel::new())
         .manage(TrayIconState(Mutex::new(None)))
@@ -61,32 +61,30 @@ pub fn run() {
             std::fs::create_dir_all(&models_dir)
                 .expect("failed to create models directory");
 
-            // Preload whisper model in background if one is configured
-            if let Some(ref model_name) = s.active_model {
-                let model_path = models_dir.join(format!("{}.bin", model_name));
-                if model_path.exists() {
-                    let model_path_str = model_path.to_string_lossy().to_string();
-                    let model_name = model_name.clone();
-                    let use_gpu = s.use_gpu;
-                    let handle2 = handle.clone();
-                    std::thread::Builder::new()
-                        .name("whisper-preload".into())
-                        .stack_size(64 * 1024 * 1024)
-                        .spawn(move || {
-                            log::info!("preloading whisper model: {model_name} (gpu={use_gpu})");
-                            match whisper::inner::WhisperEngine::load(&model_path_str, use_gpu) {
-                                Ok(engine) => {
-                                    let ws = handle2.state::<WhisperState>();
-                                    *ws.0.lock().unwrap() = Some((model_name.clone(), use_gpu, engine, 0));
-                                    log::info!("whisper model preloaded: {model_name}");
-                                }
-                                Err(e) => {
-                                    log::error!("failed to preload whisper model: {e}");
-                                }
-                            }
-                        })
-                        .expect("failed to spawn whisper-preload thread");
-                }
+            // Resolve whisper-cli binary path:
+            // - macOS: bundled sidecar is already Metal-accelerated
+            // - Windows/Linux: prefer GPU binary in app data dir (downloaded at
+            //   runtime), fall back to bundled CPU sidecar
+            {
+                let bin_dir = handle.path().app_data_dir()
+                    .expect("app data dir unavailable")
+                    .join("bin");
+                let bin_name = if cfg!(target_os = "windows") { "whisper-cli.exe" } else { "whisper-cli" };
+                let gpu_bin = bin_dir.join(bin_name);
+                let binary_path = if gpu_bin.exists() {
+                    gpu_bin
+                } else {
+                    // Bundled sidecar — Tauri places it next to the app binary
+                    let exe_dir = std::env::current_exe()
+                        .expect("failed to get exe path")
+                        .parent()
+                        .expect("exe has no parent dir")
+                        .to_path_buf();
+                    exe_dir.join(bin_name)
+                };
+                log::info!("whisper-cli binary: {}", binary_path.display());
+                let ws = handle.state::<WhisperState>();
+                *ws.binary_path.lock().unwrap() = binary_path;
             }
 
             // Hide dock icon on macOS (become accessory app)
@@ -126,6 +124,7 @@ pub fn run() {
             commands::get_api_key,
             commands::delete_api_key,
             commands::set_launch_at_login,
+            commands::download_gpu_backend,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

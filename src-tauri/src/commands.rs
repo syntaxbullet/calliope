@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::audio;
 use crate::models;
 use crate::settings::{self, Settings};
-use crate::state::{AppState, AppStateManager, WhisperState};
+use crate::state::{AppState, AppStateManager};
 
 // ── Settings ──────────────────────────────────────────────────────────────
 
@@ -66,11 +66,7 @@ pub fn list_models(app: AppHandle) -> Vec<models::ModelInfo> {
 }
 
 #[tauri::command]
-pub fn set_active_model(app: AppHandle, name: Option<String>, whisper: State<'_, WhisperState>) -> Result<(), String> {
-    // Drop cached engine whenever the active model changes (non-blocking)
-    if let Ok(mut guard) = whisper.0.try_lock() {
-        *guard = None;
-    }
+pub fn set_active_model(app: AppHandle, name: Option<String>) -> Result<(), String> {
     let mut s = settings::load(&app);
     s.active_model = name;
     settings::save(&app, &s).map_err(|e| e.to_string())
@@ -106,13 +102,9 @@ pub fn cancel_download(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn delete_model(app: AppHandle, name: String, whisper: State<'_, WhisperState>) -> Result<(), String> {
-    // If the deleted model is the active one, clear it (non-blocking)
+pub fn delete_model(app: AppHandle, name: String) -> Result<(), String> {
     let s = settings::load(&app);
     if s.active_model.as_deref() == Some(&name) {
-        if let Ok(mut guard) = whisper.0.try_lock() {
-            *guard = None;
-        }
         let mut s = s;
         s.active_model = None;
         settings::save(&app, &s).map_err(|e| e.to_string())?;
@@ -147,11 +139,36 @@ pub fn update_hotkeys(
 
 #[tauri::command]
 pub fn get_acceleration_backend() -> String {
-    if cfg!(feature = "metal") { "Metal".into() }
-    else if cfg!(feature = "cuda") { "CUDA".into() }
-    else if cfg!(feature = "rocm") { "ROCm".into() }
-    else if cfg!(feature = "coreml") { "CoreML".into() }
-    else { "CPU".into() }
+    models::detect_gpu_backend()
+}
+
+#[tauri::command]
+pub async fn download_gpu_backend(#[allow(unused)] app: AppHandle, backend: Option<String>) -> Result<String, String> {
+    // On macOS, Metal is already bundled as the sidecar — no download needed
+    #[cfg(target_os = "macos")]
+    {
+        let _ = backend;
+        return Ok("Metal".into());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let backend = backend.unwrap_or_else(|| models::detect_gpu_backend());
+        if backend == "CPU" {
+            return Ok("CPU".into());
+        }
+        models::download_gpu_whisper_cli(&app, &backend).await?;
+
+        // Update WhisperState to point to the new binary
+        let bin_dir = app.path().app_data_dir()
+            .expect("app data dir unavailable")
+            .join("bin");
+        let bin_name = if cfg!(target_os = "windows") { "whisper-cli.exe" } else { "whisper-cli" };
+        let ws = app.state::<crate::state::WhisperState>();
+        *ws.binary_path.lock().unwrap() = bin_dir.join(bin_name);
+
+        Ok(backend)
+    }
 }
 
 // ── Accessibility (macOS) ────────────────────────────────────────────────

@@ -9,31 +9,199 @@ permissions:
   contents: write
 
 jobs:
+  # ── Build whisper-cli sidecar binaries (CPU + macOS Metal) ────────────
+  build-whisper-cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS: Metal-enabled sidecars
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            cmake_flags: "-DGGML_METAL=ON"
+            artifact: sidecar
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            cmake_flags: "-DCMAKE_OSX_ARCHITECTURES=x86_64 -DGGML_METAL=ON"
+            artifact: sidecar
+          # Windows: CPU sidecars
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            cmake_flags: ""
+            artifact: sidecar
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            cmake_flags: ""
+            artifact: sidecar
+          # Linux: CPU sidecars
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            cmake_flags: ""
+            artifact: sidecar
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            cmake_flags: "-DCMAKE_TOOLCHAIN_FILE=../aarch64-toolchain.cmake"
+            artifact: sidecar
+          # ── GPU binaries (uploaded to release as download assets) ──
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            cmake_flags: "-DGGML_CUDA=ON"
+            artifact: gpu
+            backend: cuda
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            cmake_flags: "-DGGML_VULKAN=ON"
+            artifact: gpu
+            backend: vulkan
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            cmake_flags: "-DGGML_CUDA=ON"
+            artifact: gpu
+            backend: cuda
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            cmake_flags: "-DGGML_VULKAN=ON"
+            artifact: gpu
+            backend: vulkan
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout whisper.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggerganov/whisper.cpp
+          ref: v1.7.5
+          path: whisper.cpp
+
+      - name: Install aarch64 cross-compilation toolchain
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          cat > aarch64-toolchain.cmake << 'EOF'
+          set(CMAKE_SYSTEM_NAME Linux)
+          set(CMAKE_SYSTEM_PROCESSOR aarch64)
+          set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
+          set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
+          set(CMAKE_FIND_ROOT_PATH /usr/aarch64-linux-gnu)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+          EOF
+
+      - name: Install CUDA Toolkit
+        if: matrix.backend == 'cuda'
+        uses: Jimver/cuda-toolkit@v0.2.17
+        with:
+          cuda: "12.6.3"
+          method: network
+
+      - name: Install Vulkan SDK (Windows)
+        if: matrix.backend == 'vulkan' && runner.os == 'Windows'
+        run: |
+          curl -L -o VulkanSDK.exe https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
+          .\VulkanSDK.exe --accept-licenses --default-answer --confirm-command install
+        shell: pwsh
+
+      - name: Install Vulkan SDK (Linux)
+        if: matrix.backend == 'vulkan' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev
+
+      - name: Build whisper-cli
+        run: |
+          cd whisper.cpp
+          cmake -B build ${{ matrix.cmake_flags }} -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release --target whisper-cli -j $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
+        shell: bash
+
+      - name: Prepare sidecar binary
+        if: matrix.artifact == 'sidecar'
+        run: |
+          mkdir -p output
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp whisper.cpp/build/bin/Release/whisper-cli.exe output/whisper-cli-${{ matrix.target }}.exe
+          else
+            cp whisper.cpp/build/bin/whisper-cli output/whisper-cli-${{ matrix.target }}
+            chmod +x output/whisper-cli-${{ matrix.target }}
+          fi
+          # Copy Metal shader library if present (macOS Metal builds)
+          if [ -f whisper.cpp/build/bin/ggml-metal.metallib ]; then
+            cp whisper.cpp/build/bin/ggml-metal.metallib output/
+          fi
+        shell: bash
+
+      - name: Upload sidecar artifact
+        if: matrix.artifact == 'sidecar'
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-cli-${{ matrix.target }}
+          path: output/
+          retention-days: 1
+
+      - name: Prepare GPU binary
+        if: matrix.artifact == 'gpu'
+        run: |
+          mkdir -p gpu-output
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp whisper.cpp/build/bin/Release/whisper-cli.exe gpu-output/whisper-cli-${{ matrix.backend }}-${{ matrix.target }}.exe
+          else
+            cp whisper.cpp/build/bin/whisper-cli gpu-output/whisper-cli-${{ matrix.backend }}-${{ matrix.target }}
+            chmod +x gpu-output/whisper-cli-${{ matrix.backend }}-${{ matrix.target }}
+          fi
+        shell: bash
+
+      - name: Upload GPU binary to release
+        if: matrix.artifact == 'gpu'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: gpu-output/*
+          tag_name: ${{ github.ref_name }}
+          draft: true
+
+  # ── Build Tauri app ──────────────────────────────────────────────────
   release:
+    needs: build-whisper-cli
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
-            features: metal
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
-            features: metal
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            features: whisper
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            features: whisper
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Linux system dependencies
-        if: matrix.os == 'ubuntu-22.04'
+      - name: Download whisper-cli binary
+        uses: actions/download-artifact@v4
+        with:
+          name: whisper-cli-${{ matrix.target }}
+          path: src-tauri/binaries/
+
+      - name: Prepare sidecar binary
+        run: |
+          cd src-tauri/binaries
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            chmod +x whisper-cli-${{ matrix.target }}
+          fi
+        shell: bash
+
+      - name: Install Linux system dependencies (x86_64)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -42,10 +210,39 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libasound2-dev \
+            libxdo-dev \
             patchelf \
             pkg-config
 
+      - name: Install Linux system dependencies (aarch64 cross)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ jammy main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ jammy-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            libwebkit2gtk-4.1-dev:arm64 \
+            libgtk-3-dev:arm64 \
+            libayatana-appindicator3-dev:arm64 \
+            librsvg2-dev:arm64 \
+            libasound2-dev:arm64 \
+            libxdo-dev:arm64 \
+            patchelf \
+            pkg-config
+          echo "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Setup Bun
+        if: runner.os != 'Windows'
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -60,10 +257,16 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install frontend dependencies
+      - name: Install frontend dependencies (bun)
+        if: runner.os != 'Windows'
         run: bun install
 
-      - name: Build and release
+      - name: Install frontend dependencies (npm)
+        if: runner.os == 'Windows'
+        run: npm install
+
+      - name: Build and release (Windows)
+        if: runner.os == 'Windows'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -73,4 +276,19 @@ jobs:
           releaseBody: "See assets below to download."
           releaseDraft: true
           prerelease: false
-          args: --target ${{ matrix.target }} --features ${{ matrix.features }}
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.windows-ci.conf.json
+          tauriScript: npx tauri
+
+      - name: Build and release
+        if: runner.os != 'Windows'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Calliope ${{ github.ref_name }}"
+          releaseBody: "See assets below to download."
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
+          tauriScript: bun tauri

@@ -40,7 +40,13 @@ jobs:
             libasound2-dev \
             pkg-config
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Setup Bun
+        if: runner.os != 'Windows'
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -55,8 +61,13 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install frontend dependencies
+      - name: Install frontend dependencies (bun)
+        if: runner.os != 'Windows'
         run: bun install
+
+      - name: Install frontend dependencies (npm)
+        if: runner.os == 'Windows'
+        run: npm install
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -64,6 +75,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: --target ${{ matrix.target }}
+          tauriScript: ${{ runner.os == 'Windows' && 'npx tauri' || 'bun tauri' }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

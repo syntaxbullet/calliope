@@ -28,15 +28,15 @@ impl WindowsInjector {
 
     fn try_uia(&self, text: &str) -> Result<(), String> {
         unsafe {
-            CoInitializeEx(None, COINIT_MULTITHREADED).map_err(|e| e.to_string())?;
+            CoInitializeEx(None, COINIT_MULTITHREADED).ok().map_err(|e| e.to_string())?;
 
             let result = (|| -> Result<(), String> {
                 let automation: IUIAutomation =
-                    windows::core::ComInterface::cast(&windows::Win32::System::Com::CoCreateInstance::<_, IUIAutomation>(
+                    windows::Win32::System::Com::CoCreateInstance::<IUIAutomation>(
                         &CUIAutomation,
                         None,
                         windows::Win32::System::Com::CLSCTX_INPROC_SERVER,
-                    ).map_err(|e| format!("CoCreateInstance failed: {e}"))?)?;
+                    ).map_err(|e| format!("CoCreateInstance failed: {e}"))?;
 
                 let focused = automation
                     .GetFocusedElement()

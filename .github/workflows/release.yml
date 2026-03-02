@@ -18,7 +18,7 @@ jobs:
           # macOS: Metal-enabled sidecars
           - os: macos-latest
             target: aarch64-apple-darwin
-            cmake_flags: "-DGGML_METAL=ON"
+            cmake_flags: "-DGGML_METAL=ON -DGGML_NATIVE=OFF"
             artifact: sidecar
           - os: macos-latest
             target: x86_64-apple-darwin

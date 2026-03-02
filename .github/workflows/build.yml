@@ -14,7 +14,7 @@ jobs:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
-            cmake_flags: "-DGGML_METAL=ON"
+            cmake_flags: "-DGGML_METAL=ON -DGGML_NATIVE=OFF"
           - os: macos-latest
             target: x86_64-apple-darwin
             cmake_flags: "-DCMAKE_OSX_ARCHITECTURES=x86_64 -DGGML_METAL=ON"

@@ -1,0 +1,65 @@
+[package]
+name = "calliope"
+version = "0.1.0"
+description = "Local, cross-platform speech-to-text dictation"
+authors = ["syntaxbullet"]
+edition = "2021"
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "calliope_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
+tauri-plugin-store = "2"
+tauri-plugin-global-shortcut = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["stream", "json"] }
+keyring = "2"
+log = "0.4"
+env_logger = "0.11"
+thiserror = "1"
+cpal = "0.15"
+rubato = "0.16"
+arboard = "3"
+enigo = "0.2"
+tauri-plugin-autostart = "2.5.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.24"
+core-foundation = "0.10"
+sha2 = "0.10"
+futures-util = "0.3"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Com",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+atspi = "0.5"
+zbus = "4"
+
+# Whisper inference — optional to allow compilation before model weights are present
+[features]
+default = []
+whisper = ["dep:whisper-rs"]
+metal = ["whisper", "whisper-rs/metal"]
+cuda = ["whisper", "whisper-rs/cuda"]
+rocm = ["whisper", "whisper-rs/hipblas"]
+coreml = ["whisper", "whisper-rs/coreml"]
+
+[dependencies.whisper-rs]
+version = "0.15"
+optional = true

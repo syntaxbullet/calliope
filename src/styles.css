@@ -1,0 +1,109 @@
+/* ── Geist font faces ─────────────────────────────────────── */
+/* Geist will be loaded from a CDN for now; swap to bundled WOFF2 in Phase 3 */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400&display=swap");
+
+@import "tailwindcss";
+
+/* ── Design tokens ────────────────────────────────────────── */
+:root {
+  /* Light theme (default) */
+  --bg-base:       #FAFAF9;
+  --bg-surface:    #FFFFFF;
+  --bg-subtle:     #F5F4F2;
+  --bg-muted:      #EDECEA;
+  --text-primary:  #1C1B1A;
+  --text-secondary:#6B6966;
+  --text-disabled: #B0ADA9;
+  --border:        #E4E2DF;
+  --border-strong: #C9C6C2;
+  --recording:     #1C1B1A;
+  --error:         #C0392B;
+
+  font-family: "Geist", system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--text-primary);
+  background-color: var(--bg-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-base:       #141413;
+    --bg-surface:    #1E1D1C;
+    --bg-subtle:     #252422;
+    --bg-muted:      #2C2B29;
+    --text-primary:  #F0EFED;
+    --text-secondary:#908D89;
+    --text-disabled: #5A5754;
+    --border:        #2E2D2B;
+    --border-strong: #48453F;
+    --recording:     #F0EFED;
+    --error:         #E74C3C;
+  }
+}
+
+/* Manual theme override classes (applied to <html>) */
+html.theme-light {
+  --bg-base:       #FAFAF9;
+  --bg-surface:    #FFFFFF;
+  --bg-subtle:     #F5F4F2;
+  --bg-muted:      #EDECEA;
+  --text-primary:  #1C1B1A;
+  --text-secondary:#6B6966;
+  --text-disabled: #B0ADA9;
+  --border:        #E4E2DF;
+  --border-strong: #C9C6C2;
+  --recording:     #1C1B1A;
+  --error:         #C0392B;
+}
+
+html.theme-dark {
+  --bg-base:       #141413;
+  --bg-surface:    #1E1D1C;
+  --bg-subtle:     #252422;
+  --bg-muted:      #2C2B29;
+  --text-primary:  #F0EFED;
+  --text-secondary:#908D89;
+  --text-disabled: #5A5754;
+  --border:        #2E2D2B;
+  --border-strong: #48453F;
+  --recording:     #F0EFED;
+  --error:         #E74C3C;
+}
+
+/* ── Overlay window: fully transparent background ────────── */
+html.overlay-window,
+html.overlay-window body {
+  background: transparent !important;
+}
+
+/* ── Base resets ──────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+}
+
+/* ── Typography helpers ───────────────────────────────────── */
+.text-title    { font-size: 15px; font-weight: 600; line-height: 1.3; }
+.text-body     { font-size: 13px; font-weight: 400; line-height: 1.5; }
+.text-medium   { font-size: 13px; font-weight: 500; line-height: 1.5; }
+.text-caption  { font-size: 11px; font-weight: 400; line-height: 1.4; }
+.text-mono     { font-family: "Geist Mono", monospace; font-size: 12px; font-weight: 400; line-height: 1.4; }
+
+/* ── Reduced motion ───────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0ms !important;
+    transition-duration: 0ms !important;
+  }
+}

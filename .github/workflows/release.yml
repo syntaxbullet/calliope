@@ -113,7 +113,7 @@ jobs:
       - name: Build whisper-cli
         run: |
           cd whisper.cpp
-          cmake -B build ${{ matrix.cmake_flags }} -DCMAKE_BUILD_TYPE=Release
+          cmake -B build ${{ matrix.cmake_flags }} -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
           cmake --build build --config Release --target whisper-cli -j $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
         shell: bash
 
@@ -140,6 +140,14 @@ jobs:
           name: whisper-cli-${{ matrix.target }}
           path: output/
           retention-days: 1
+
+      - name: Upload sidecar binary to release
+        if: matrix.artifact == 'sidecar'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: output/whisper-cli-${{ matrix.target }}*
+          tag_name: ${{ github.ref_name }}
+          draft: true
 
       - name: Prepare GPU binary
         if: matrix.artifact == 'gpu'

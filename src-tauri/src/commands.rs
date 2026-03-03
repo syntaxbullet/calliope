@@ -147,37 +147,48 @@ pub fn check_gpu_binary_installed(app: AppHandle) -> bool {
 }
 
 #[tauri::command]
+pub fn check_whisper_cli_available(app: AppHandle) -> bool {
+    let bin_name = if cfg!(target_os = "windows") { "whisper-cli.exe" } else { "whisper-cli" };
+
+    // Check downloaded binary in app data bin dir
+    let bin_dir = app.path().app_data_dir()
+        .expect("app data dir unavailable")
+        .join("bin");
+    if bin_dir.join(bin_name).exists() {
+        return true;
+    }
+
+    // Check bundled sidecar next to the app binary
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            if exe_dir.join(bin_name).exists() {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+#[tauri::command]
 pub fn get_acceleration_backend() -> String {
     models::detect_gpu_backend()
 }
 
 #[tauri::command]
-pub async fn download_gpu_backend(#[allow(unused)] app: AppHandle, backend: Option<String>) -> Result<String, String> {
-    // On macOS, Metal is already bundled as the sidecar — no download needed
-    #[cfg(target_os = "macos")]
-    {
-        let _ = backend;
-        return Ok("Metal".into());
-    }
+pub async fn download_gpu_backend(app: AppHandle, backend: Option<String>) -> Result<String, String> {
+    let backend = backend.unwrap_or_else(|| models::detect_gpu_backend());
+    models::download_whisper_cli(&app, &backend).await?;
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        let backend = backend.unwrap_or_else(|| models::detect_gpu_backend());
-        if backend == "CPU" {
-            return Ok("CPU".into());
-        }
-        models::download_gpu_whisper_cli(&app, &backend).await?;
+    // Update WhisperState to point to the new binary
+    let bin_dir = app.path().app_data_dir()
+        .expect("app data dir unavailable")
+        .join("bin");
+    let bin_name = if cfg!(target_os = "windows") { "whisper-cli.exe" } else { "whisper-cli" };
+    let ws = app.state::<crate::state::WhisperState>();
+    *ws.binary_path.lock().unwrap() = bin_dir.join(bin_name);
 
-        // Update WhisperState to point to the new binary
-        let bin_dir = app.path().app_data_dir()
-            .expect("app data dir unavailable")
-            .join("bin");
-        let bin_name = if cfg!(target_os = "windows") { "whisper-cli.exe" } else { "whisper-cli" };
-        let ws = app.state::<crate::state::WhisperState>();
-        *ws.binary_path.lock().unwrap() = bin_dir.join(bin_name);
-
-        Ok(backend)
-    }
+    Ok(backend)
 }
 
 // ── Accessibility (macOS) ────────────────────────────────────────────────

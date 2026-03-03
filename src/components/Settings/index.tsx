@@ -415,13 +415,13 @@ function GeneralTab({
 
   useEffect(() => {
     invoke<string>("get_acceleration_backend").then(setBackend).catch(() => setBackend("CPU"));
-    invoke<boolean>("check_gpu_binary_installed").then(setGpuInstalled).catch(() => setGpuInstalled(false));
+    invoke<boolean>("check_whisper_cli_available").then(setGpuInstalled).catch(() => setGpuInstalled(false));
   }, []);
 
   // Listen for GPU binary download progress
   useEffect(() => {
-    if (!backend || backend === "CPU" || backend === "Metal") return;
-    const progressName = `whisper-cli-${backend.toLowerCase()}`;
+    if (!backend) return;
+    const progressName = `whisper-cli-${backend}`;
     const unlisten = listen<DownloadProgressEvent>("download-progress", (e) => {
       const { name, bytes_downloaded, total_bytes } = e.payload;
       if (name === progressName) {
@@ -432,7 +432,7 @@ function GeneralTab({
     return () => { unlisten.then((f) => f()); };
   }, [backend]);
 
-  const needsGpuDownload = backend !== null && backend !== "CPU" && backend !== "Metal" && gpuInstalled === false;
+  const needsDownload = backend !== null && gpuInstalled === false;
   const hasGpuBackend = backend !== null && backend !== "CPU";
 
   return (
@@ -552,14 +552,14 @@ function GeneralTab({
               {backend}
             </span>
           )}
-          {gpuInstalled && backend !== "Metal" && backend !== "CPU" && (
+          {gpuInstalled && (
             <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
               <Check size={12} style={{ display: "inline", verticalAlign: "middle", marginRight: 2 }} />
-              GPU binary installed
+              whisper-cli installed
             </span>
           )}
         </div>
-        {needsGpuDownload && gpuDownloading === null && (
+        {needsDownload && gpuDownloading === null && (
           <button
             onClick={async () => {
               setGpuDownloadError(null);
@@ -588,7 +588,7 @@ function GeneralTab({
             }}
           >
             <Download size={14} />
-            Download GPU acceleration ({backend})
+            Download whisper-cli ({backend})
           </button>
         )}
         {gpuDownloading !== null && (

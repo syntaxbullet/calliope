@@ -126,6 +126,7 @@ pub fn run() {
             commands::set_launch_at_login,
             commands::download_gpu_backend,
             commands::check_gpu_binary_installed,
+            commands::check_whisper_cli_available,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

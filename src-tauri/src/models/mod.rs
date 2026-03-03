@@ -262,36 +262,43 @@ fn bin_dir(app: &AppHandle) -> PathBuf {
         .join("bin")
 }
 
-/// Returns the download URL for a GPU-accelerated whisper-cli binary.
+/// Returns the download URL for a whisper-cli binary matching this platform and backend.
 /// These are hosted on the Calliope GitHub releases.
-fn gpu_binary_url(backend: &str) -> Result<String, String> {
+fn whisper_cli_url(backend: &str) -> Result<String, String> {
     let base = "https://github.com/syntaxbullet/calliope/releases/latest/download";
 
     let filename = match (std::env::consts::OS, std::env::consts::ARCH, backend) {
-        ("macos", _, "Metal") => {
-            // Metal is bundled as the sidecar on macOS — no download needed
-            return Err("Metal binary is already bundled on macOS".into());
-        }
+        // macOS (Metal or CPU — same binary, Metal-enabled)
+        ("macos", "aarch64", _) => "whisper-cli-aarch64-apple-darwin",
+        ("macos", "x86_64", _) => "whisper-cli-x86_64-apple-darwin",
+        // Windows GPU
         ("windows", "x86_64", "CUDA") => "whisper-cli-cuda-x86_64-pc-windows-msvc.exe",
         ("windows", "x86_64", "Vulkan") => "whisper-cli-vulkan-x86_64-pc-windows-msvc.exe",
+        // Windows CPU
+        ("windows", "x86_64", _) => "whisper-cli-x86_64-pc-windows-msvc.exe",
+        ("windows", "aarch64", _) => "whisper-cli-aarch64-pc-windows-msvc.exe",
+        // Linux GPU
         ("linux", "x86_64", "CUDA") => "whisper-cli-cuda-x86_64-unknown-linux-gnu",
         ("linux", "x86_64", "Vulkan") => "whisper-cli-vulkan-x86_64-unknown-linux-gnu",
-        _ => return Err(format!("no GPU binary available for {}/{}/{backend}", std::env::consts::OS, std::env::consts::ARCH)),
+        // Linux CPU
+        ("linux", "x86_64", _) => "whisper-cli-x86_64-unknown-linux-gnu",
+        ("linux", "aarch64", _) => "whisper-cli-aarch64-unknown-linux-gnu",
+        _ => return Err(format!("no whisper-cli binary available for {}/{}/{backend}", std::env::consts::OS, std::env::consts::ARCH)),
     };
 
     Ok(format!("{base}/{filename}"))
 }
 
-/// Download a GPU-accelerated whisper-cli binary, emitting progress events.
-pub async fn download_gpu_whisper_cli(app: &AppHandle, backend: &str) -> Result<(), String> {
-    let url = gpu_binary_url(backend)?;
+/// Download a whisper-cli binary for the given backend, emitting progress events.
+pub async fn download_whisper_cli(app: &AppHandle, backend: &str) -> Result<(), String> {
+    let url = whisper_cli_url(backend)?;
     let dir = bin_dir(app);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
     let bin_name = if cfg!(target_os = "windows") { "whisper-cli.exe" } else { "whisper-cli" };
     let dest = dir.join(bin_name);
 
-    log::info!("downloading GPU whisper-cli ({backend}) from {url}");
+    log::info!("downloading whisper-cli ({backend}) from {url}");
 
     let response = reqwest::get(&url).await.map_err(|e| e.to_string())?;
     if !response.status().is_success() {
@@ -329,6 +336,6 @@ pub async fn download_gpu_whisper_cli(app: &AppHandle, backend: &str) -> Result<
             .map_err(|e| e.to_string())?;
     }
 
-    log::info!("GPU whisper-cli ({backend}) installed to {}", dest.display());
+    log::info!("whisper-cli ({backend}) installed to {}", dest.display());
     Ok(())
 }

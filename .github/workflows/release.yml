@@ -146,17 +146,18 @@ jobs:
 
       - name: Install CUDA Toolkit
         if: matrix.backend == 'cuda'
-        uses: Jimver/cuda-toolkit@v0.2.17
+        uses: Jimver/cuda-toolkit@v0.2.23
         with:
           cuda: "12.6.3"
           method: network
 
       - name: Install Vulkan SDK (Windows)
         if: matrix.backend == 'vulkan' && runner.os == 'Windows'
-        run: |
-          curl -L -o VulkanSDK.exe https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
-          .\VulkanSDK.exe --accept-licenses --default-answer --confirm-command install
-        shell: pwsh
+        uses: humbletim/setup-vulkan-sdk@v1.2.0
+        with:
+          vulkan-query-version: latest
+          vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, SPIRV-Tools
+          vulkan-use-cache: true
 
       - name: Install Vulkan SDK (Linux)
         if: matrix.backend == 'vulkan' && runner.os == 'Linux'

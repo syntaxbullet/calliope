@@ -233,6 +233,9 @@ jobs:
             libssl-dev:arm64 \
             patchelf \
             pkg-config
+          # Mirror arm64 libs into the sysroot so Tauri bundler can find them
+          sudo mkdir -p /usr/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu
+          sudo cp -a /usr/lib/aarch64-linux-gnu/libayatana-appindicator3.so* /usr/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu/ || true
           echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
           echo "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
@@ -281,13 +284,26 @@ jobs:
           args: --target ${{ matrix.target }} --config src-tauri/tauri.windows-ci.conf.json
           tauriScript: npx tauri
 
-      - name: Build and release
-        if: runner.os != 'Windows'
+      - name: Build and release (Linux)
+        if: runner.os == 'Linux'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NO_STRIP: true
-          APPIMAGE_EXTRACT_AND_RUN: 1
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Calliope ${{ github.ref_name }}"
+          releaseBody: "See assets below to download."
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.linux-ci.conf.json
+          tauriScript: bun tauri
+
+      - name: Build and release (macOS)
+        if: runner.os == 'macOS'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Calliope ${{ github.ref_name }}"

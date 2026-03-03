@@ -155,6 +155,9 @@ jobs:
             libxdo-dev:arm64 \
             libssl-dev:arm64 \
             pkg-config
+          # Mirror arm64 libs into the sysroot so Tauri bundler can find them
+          sudo mkdir -p /usr/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu
+          sudo cp -a /usr/lib/aarch64-linux-gnu/libayatana-appindicator3.so* /usr/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu/ || true
           echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
           echo "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
@@ -198,13 +201,21 @@ jobs:
           args: --target ${{ matrix.target }} --config src-tauri/tauri.windows-ci.conf.json
           tauriScript: npx tauri
 
-      - name: Build Tauri app
-        if: runner.os != 'Windows'
+      - name: Build Tauri app (Linux)
+        if: runner.os == 'Linux'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NO_STRIP: true
-          APPIMAGE_EXTRACT_AND_RUN: 1
+        with:
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.linux-ci.conf.json
+          tauriScript: bun tauri
+
+      - name: Build Tauri app (macOS)
+        if: runner.os == 'macOS'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: --target ${{ matrix.target }}
           tauriScript: bun tauri

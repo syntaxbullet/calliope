@@ -144,26 +144,39 @@ jobs:
           ref: v1.7.5
           path: whisper.cpp
 
-      - name: Install CUDA Toolkit
-        if: matrix.backend == 'cuda'
-        uses: Jimver/cuda-toolkit@v0.2.23
-        with:
-          cuda: "12.6.3"
-          method: network
+      - name: Install CUDA Toolkit (Windows)
+        if: matrix.backend == 'cuda' && runner.os == 'Windows'
+        run: |
+          curl -L -o cuda_installer.exe https://developer.download.nvidia.com/compute/cuda/12.6.3/network_installers/cuda_12.6.3_windows_network.exe
+          Start-Process -Wait -FilePath .\cuda_installer.exe -ArgumentList '-s cudart_12.6 nvcc_12.6 cublas_12.6 cublas_dev_12.6'
+          echo "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6" >> $env:GITHUB_ENV
+          echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin" >> $env:GITHUB_PATH
+        shell: pwsh
+
+      - name: Install CUDA Toolkit (Linux)
+        if: matrix.backend == 'cuda' && runner.os == 'Linux'
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cuda-toolkit-12-6
 
       - name: Install Vulkan SDK (Windows)
         if: matrix.backend == 'vulkan' && runner.os == 'Windows'
-        uses: humbletim/setup-vulkan-sdk@v1.2.0
-        with:
-          vulkan-query-version: latest
-          vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, SPIRV-Tools
-          vulkan-use-cache: true
+        run: |
+          curl -L -o VulkanSDK.exe https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
+          Start-Process -Wait -FilePath .\VulkanSDK.exe -ArgumentList '--accept-licenses --default-answer --confirm-command install'
+          $sdkDirs = Get-ChildItem "C:\VulkanSDK" -Directory | Sort-Object Name -Descending
+          $sdkPath = $sdkDirs[0].FullName
+          echo "VULKAN_SDK=$sdkPath" >> $env:GITHUB_ENV
+          echo "$sdkPath\Bin" >> $env:GITHUB_PATH
+        shell: pwsh
 
       - name: Install Vulkan SDK (Linux)
         if: matrix.backend == 'vulkan' && runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libvulkan-dev
+          sudo apt-get install -y libvulkan-dev glslang-tools
 
       - name: Build whisper-cli
         run: |

@@ -138,6 +138,15 @@ pub fn update_hotkeys(
 // ── Acceleration ─────────────────────────────────────────────────────────
 
 #[tauri::command]
+pub fn check_gpu_binary_installed(app: AppHandle) -> bool {
+    let bin_dir = app.path().app_data_dir()
+        .expect("app data dir unavailable")
+        .join("bin");
+    let bin_name = if cfg!(target_os = "windows") { "whisper-cli.exe" } else { "whisper-cli" };
+    bin_dir.join(bin_name).exists()
+}
+
+#[tauri::command]
 pub fn get_acceleration_backend() -> String {
     models::detect_gpu_backend()
 }

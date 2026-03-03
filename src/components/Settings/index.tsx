@@ -409,11 +409,30 @@ function GeneralTab({
   saveMsg: string;
 }) {
   const [backend, setBackend] = useState<string | null>(null);
+  const [gpuInstalled, setGpuInstalled] = useState<boolean | null>(null);
+  const [gpuDownloading, setGpuDownloading] = useState<number | null>(null);
+  const [gpuDownloadError, setGpuDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     invoke<string>("get_acceleration_backend").then(setBackend).catch(() => setBackend("CPU"));
+    invoke<boolean>("check_gpu_binary_installed").then(setGpuInstalled).catch(() => setGpuInstalled(false));
   }, []);
 
+  // Listen for GPU binary download progress
+  useEffect(() => {
+    if (!backend || backend === "CPU" || backend === "Metal") return;
+    const progressName = `whisper-cli-${backend.toLowerCase()}`;
+    const unlisten = listen<DownloadProgressEvent>("download-progress", (e) => {
+      const { name, bytes_downloaded, total_bytes } = e.payload;
+      if (name === progressName) {
+        const pct = total_bytes > 0 ? Math.round((bytes_downloaded / total_bytes) * 100) : 0;
+        setGpuDownloading(pct);
+      }
+    });
+    return () => { unlisten.then((f) => f()); };
+  }, [backend]);
+
+  const needsGpuDownload = backend !== null && backend !== "CPU" && backend !== "Metal" && gpuInstalled === false;
   const hasGpuBackend = backend !== null && backend !== "CPU";
 
   return (
@@ -509,28 +528,79 @@ function GeneralTab({
         </span>
       </Field>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        {hasGpuBackend && (
-          <Checkbox
-            checked={local.use_gpu}
-            onChange={(v) => patch({ use_gpu: v })}
-            label="Hardware acceleration"
-          />
-        )}
-        {backend && (
-          <span
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {hasGpuBackend && (
+            <Checkbox
+              checked={local.use_gpu}
+              onChange={(v) => patch({ use_gpu: v })}
+              label="Hardware acceleration"
+            />
+          )}
+          {backend && (
+            <span
+              style={{
+                fontSize: 11,
+                fontFamily: "var(--font-mono)",
+                padding: "2px 8px",
+                borderRadius: 4,
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border)",
+                color: "var(--text-secondary)",
+              }}
+            >
+              {backend}
+            </span>
+          )}
+          {gpuInstalled && backend !== "Metal" && backend !== "CPU" && (
+            <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+              <Check size={12} style={{ display: "inline", verticalAlign: "middle", marginRight: 2 }} />
+              GPU binary installed
+            </span>
+          )}
+        </div>
+        {needsGpuDownload && gpuDownloading === null && (
+          <button
+            onClick={async () => {
+              setGpuDownloadError(null);
+              setGpuDownloading(0);
+              try {
+                await invoke("download_gpu_backend", { backend });
+                setGpuInstalled(true);
+                setGpuDownloading(null);
+              } catch (e: any) {
+                setGpuDownloadError(String(e));
+                setGpuDownloading(null);
+              }
+            }}
             style={{
-              fontSize: 11,
-              fontFamily: "var(--font-mono)",
-              padding: "2px 8px",
-              borderRadius: 4,
-              background: "var(--bg-surface)",
+              fontSize: 12,
+              padding: "6px 12px",
+              borderRadius: 6,
               border: "1px solid var(--border)",
-              color: "var(--text-secondary)",
+              background: "var(--bg-surface)",
+              color: "var(--text-primary)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              width: "fit-content",
             }}
           >
-            {backend}
-          </span>
+            <Download size={14} />
+            Download GPU acceleration ({backend})
+          </button>
+        )}
+        {gpuDownloading !== null && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 160, height: 6, borderRadius: 3, background: "var(--bg-surface)", overflow: "hidden" }}>
+              <div style={{ width: `${gpuDownloading}%`, height: "100%", borderRadius: 3, background: "var(--text-secondary)", transition: "width 0.2s" }} />
+            </div>
+            <span style={{ fontSize: 11, color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>{gpuDownloading}%</span>
+          </div>
+        )}
+        {gpuDownloadError && (
+          <span style={{ fontSize: 11, color: "#e55" }}>{gpuDownloadError}</span>
         )}
       </div>
 

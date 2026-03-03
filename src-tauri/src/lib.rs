@@ -125,6 +125,7 @@ pub fn run() {
             commands::delete_api_key,
             commands::set_launch_at_login,
             commands::download_gpu_backend,
+            commands::check_gpu_binary_installed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

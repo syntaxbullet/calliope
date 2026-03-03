@@ -19,50 +19,23 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             cmake_flags: "-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DGGML_NATIVE=OFF"
-            artifact: sidecar
           - os: macos-latest
             target: x86_64-apple-darwin
             cmake_flags: "-DCMAKE_OSX_ARCHITECTURES=x86_64 -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DGGML_NATIVE=OFF"
-            artifact: sidecar
           # Windows: CPU sidecars
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             cmake_flags: ""
-            artifact: sidecar
           - os: windows-11-arm
             target: aarch64-pc-windows-msvc
             cmake_flags: "-T ClangCL"
-            artifact: sidecar
           # Linux: CPU sidecars
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             cmake_flags: ""
-            artifact: sidecar
           - os: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
             cmake_flags: "-DCMAKE_TOOLCHAIN_FILE=../aarch64-toolchain.cmake"
-            artifact: sidecar
-          # ── GPU binaries (uploaded to release as download assets) ──
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            cmake_flags: "-DGGML_CUDA=ON"
-            artifact: gpu
-            backend: cuda
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            cmake_flags: "-DGGML_VULKAN=ON"
-            artifact: gpu
-            backend: vulkan
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            cmake_flags: "-DGGML_CUDA=ON"
-            artifact: gpu
-            backend: cuda
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            cmake_flags: "-DGGML_VULKAN=ON"
-            artifact: gpu
-            backend: vulkan
 
     runs-on: ${{ matrix.os }}
 
@@ -89,6 +62,87 @@ jobs:
           set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
           set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
           EOF
+
+      - name: Build whisper-cli
+        run: |
+          cd whisper.cpp
+          rm -rf build
+          cmake -B build ${{ matrix.cmake_flags }} -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+          cmake --build build --config Release --target whisper-cli -j $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
+        shell: bash
+
+      - name: Verify static linking (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "=== otool -L ==="
+          otool -L whisper.cpp/build/bin/whisper-cli
+          if otool -L whisper.cpp/build/bin/whisper-cli | grep -q libwhisper; then
+            echo "ERROR: whisper-cli is dynamically linked against libwhisper!"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Prepare sidecar binary
+        run: |
+          mkdir -p output
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp whisper.cpp/build/bin/Release/whisper-cli.exe output/whisper-cli-${{ matrix.target }}.exe
+          else
+            cp whisper.cpp/build/bin/whisper-cli output/whisper-cli-${{ matrix.target }}
+            chmod +x output/whisper-cli-${{ matrix.target }}
+          fi
+          # Copy Metal shader library if present (macOS Metal builds)
+          if [ -f whisper.cpp/build/bin/ggml-metal.metallib ]; then
+            cp whisper.cpp/build/bin/ggml-metal.metallib output/
+          fi
+        shell: bash
+
+      - name: Upload sidecar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-cli-${{ matrix.target }}
+          path: output/
+          retention-days: 1
+
+      - name: Upload sidecar binary to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: output/whisper-cli-${{ matrix.target }}*
+          tag_name: ${{ github.ref_name }}
+          draft: true
+
+  # ── Build GPU-accelerated whisper-cli binaries (optional, doesn't block release) ──
+  build-gpu-binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            cmake_flags: "-DGGML_CUDA=ON"
+            backend: cuda
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            cmake_flags: "-DGGML_VULKAN=ON"
+            backend: vulkan
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            cmake_flags: "-DGGML_CUDA=ON"
+            backend: cuda
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            cmake_flags: "-DGGML_VULKAN=ON"
+            backend: vulkan
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout whisper.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggerganov/whisper.cpp
+          ref: v1.7.5
+          path: whisper.cpp
 
       - name: Install CUDA Toolkit
         if: matrix.backend == 'cuda'
@@ -118,51 +172,7 @@ jobs:
           cmake --build build --config Release --target whisper-cli -j $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
         shell: bash
 
-      - name: Verify static linking (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          echo "=== otool -L ==="
-          otool -L whisper.cpp/build/bin/whisper-cli
-          if otool -L whisper.cpp/build/bin/whisper-cli | grep -q libwhisper; then
-            echo "ERROR: whisper-cli is dynamically linked against libwhisper!"
-            exit 1
-          fi
-        shell: bash
-
-      - name: Prepare sidecar binary
-        if: matrix.artifact == 'sidecar'
-        run: |
-          mkdir -p output
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp whisper.cpp/build/bin/Release/whisper-cli.exe output/whisper-cli-${{ matrix.target }}.exe
-          else
-            cp whisper.cpp/build/bin/whisper-cli output/whisper-cli-${{ matrix.target }}
-            chmod +x output/whisper-cli-${{ matrix.target }}
-          fi
-          # Copy Metal shader library if present (macOS Metal builds)
-          if [ -f whisper.cpp/build/bin/ggml-metal.metallib ]; then
-            cp whisper.cpp/build/bin/ggml-metal.metallib output/
-          fi
-        shell: bash
-
-      - name: Upload sidecar artifact
-        if: matrix.artifact == 'sidecar'
-        uses: actions/upload-artifact@v4
-        with:
-          name: whisper-cli-${{ matrix.target }}
-          path: output/
-          retention-days: 1
-
-      - name: Upload sidecar binary to release
-        if: matrix.artifact == 'sidecar'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: output/whisper-cli-${{ matrix.target }}*
-          tag_name: ${{ github.ref_name }}
-          draft: true
-
       - name: Prepare GPU binary
-        if: matrix.artifact == 'gpu'
         run: |
           mkdir -p gpu-output
           if [ "${{ runner.os }}" = "Windows" ]; then
@@ -174,7 +184,6 @@ jobs:
         shell: bash
 
       - name: Upload GPU binary to release
-        if: matrix.artifact == 'gpu'
         uses: softprops/action-gh-release@v2
         with:
           files: gpu-output/*

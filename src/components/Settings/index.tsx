@@ -509,13 +509,30 @@ function GeneralTab({
         </span>
       </Field>
 
-      {hasGpuBackend && (
-        <Checkbox
-          checked={local.use_gpu}
-          onChange={(v) => patch({ use_gpu: v })}
-          label={`Hardware acceleration (${backend})`}
-        />
-      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {hasGpuBackend && (
+          <Checkbox
+            checked={local.use_gpu}
+            onChange={(v) => patch({ use_gpu: v })}
+            label="Hardware acceleration"
+          />
+        )}
+        {backend && (
+          <span
+            style={{
+              fontSize: 11,
+              fontFamily: "var(--font-mono)",
+              padding: "2px 8px",
+              borderRadius: 4,
+              background: "var(--bg-surface)",
+              border: "1px solid var(--border)",
+              color: "var(--text-secondary)",
+            }}
+          >
+            {backend}
+          </span>
+        )}
+      </div>
 
       <Checkbox
         checked={local.launch_at_login}

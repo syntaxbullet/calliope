@@ -124,7 +124,7 @@ fn start_recording(app: &AppHandle, is_toggle: bool) {
     };
 
     // Store the source sample rate for resampling after recording
-    *app.state::<ActiveSampleRate>().0.lock().unwrap() = config.sample_rate.0;
+    *app.state::<ActiveSampleRate>().0.lock().unwrap() = config.sample_rate;
 
     let buf_state = app.state::<ActiveBufferState>();
     let buffer = buf_state.0.clone();

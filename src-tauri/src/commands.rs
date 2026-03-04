@@ -263,7 +263,7 @@ pub fn get_api_key(provider: String) -> Result<Option<String>, String> {
 pub fn delete_api_key(provider: String) -> Result<(), String> {
     let entry = keyring::Entry::new("com.syntaxbullet.calliope", &provider)
         .map_err(|e| e.to_string())?;
-    match entry.delete_password() {
+    match entry.delete_credential() {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.to_string()),

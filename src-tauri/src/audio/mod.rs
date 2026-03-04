@@ -1,5 +1,5 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, SampleFormat, SampleRate, StreamConfig};
+use cpal::{Device, SampleFormat, StreamConfig};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
@@ -26,14 +26,14 @@ pub fn list_input_devices() -> Vec<AudioDevice> {
     let host = cpal::default_host();
     let default_name = host
         .default_input_device()
-        .and_then(|d| d.name().ok())
+        .and_then(|d| d.description().ok().map(|desc| desc.name().to_string()))
         .unwrap_or_default();
 
     host.input_devices()
         .map(|devices| {
             devices
                 .filter_map(|d| {
-                    let name = d.name().ok()?;
+                    let name = d.description().ok()?.name().to_string();
                     Some(AudioDevice {
                         id: name.clone(),
                         is_default: name == default_name,
@@ -50,7 +50,7 @@ pub fn get_input_device(device_id: Option<&str>) -> Option<Device> {
     let host = cpal::default_host();
     if let Some(id) = device_id {
         host.input_devices().ok()?.find(|d| {
-            d.name().map(|n| n == id).unwrap_or(false)
+            d.description().ok().map(|desc| desc.name() == id).unwrap_or(false)
         })
     } else {
         host.default_input_device()
@@ -62,12 +62,12 @@ pub fn build_stream_config(device: &Device) -> Option<StreamConfig> {
     let supported = device.supported_input_configs().ok()?;
     for range in supported {
         if range.sample_format() == SampleFormat::F32
-            && range.min_sample_rate().0 <= TARGET_SAMPLE_RATE
-            && range.max_sample_rate().0 >= TARGET_SAMPLE_RATE
+            && range.min_sample_rate() <= TARGET_SAMPLE_RATE
+            && range.max_sample_rate() >= TARGET_SAMPLE_RATE
         {
             return Some(StreamConfig {
                 channels: 1,
-                sample_rate: SampleRate(TARGET_SAMPLE_RATE),
+                sample_rate: TARGET_SAMPLE_RATE,
                 buffer_size: cpal::BufferSize::Default,
             });
         }
@@ -92,7 +92,7 @@ pub fn start_recording(
     let level_state = app.state::<crate::state::CurrentAudioLevel>().0.clone();
 
     let channels = config.channels as usize;
-    let source_rate = config.sample_rate.0;
+    let source_rate = config.sample_rate;
 
     log::debug!(
         "audio: recording at {}Hz, {}ch",
@@ -149,7 +149,8 @@ pub fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
         return input.to_vec();
     }
 
-    use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
+    use audioadapter_buffers::owned::InterleavedOwned;
+    use rubato::{Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 
     let params = SincInterpolationParameters {
         sinc_len: 256,
@@ -160,17 +161,19 @@ pub fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     };
 
     let ratio = to_rate as f64 / from_rate as f64;
-    let mut resampler = SincFixedIn::<f32>::new(
+    let mut resampler = Async::<f32>::new_sinc(
         ratio,
         2.0,    // max relative ratio deviation
-        params,
+        &params,
         input.len(),
         1,      // mono
+        FixedAsync::Input,
     ).expect("failed to create resampler");
 
-    let input_buf = vec![input.to_vec()];
-    let output_buf = resampler.process(&input_buf, None).expect("resampling failed");
-    output_buf.into_iter().next().unwrap()
+    let input_buf = InterleavedOwned::new_from(input.to_vec(), 1, input.len())
+        .expect("failed to create input buffer");
+    let output_buf = resampler.process(&input_buf, 0, None).expect("resampling failed");
+    output_buf.take_data()
 }
 
 /// Trim leading and trailing silence from a 16 kHz sample buffer.

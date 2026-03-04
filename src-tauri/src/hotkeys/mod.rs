@@ -79,7 +79,26 @@ fn start_recording(app: &AppHandle, is_toggle: bool) {
     log::debug!("[PTT] start_recording called");
     let state_guard = app.state::<AppStateManager>();
 
-    // Clear the audio buffer and release excess memory from previous recordings
+    // Only start a new recording from Idle state to prevent overlapping recordings
+    let current = state_guard.get();
+    if current != AppState::Idle {
+        log::debug!("[PTT] not idle (state={current:?}), ignoring start_recording");
+        return;
+    }
+
+    // Stop any leftover stream from a previous recording (defensive cleanup)
+    {
+        let stream_state = app.state::<ActiveStreamState>();
+        let prev = stream_state.0.lock().unwrap().take();
+        if let Some((stop_tx, handle)) = prev {
+            log::warn!("[PTT] found orphaned stream, cleaning up");
+            drop(stop_tx);
+            let _ = handle.join();
+        }
+    }
+
+    // Reset audio level and clear the buffer for the new recording
+    app.state::<CurrentAudioLevel>().0.store(0, std::sync::atomic::Ordering::Relaxed);
     {
         let buf_state = app.state::<ActiveBufferState>();
         let mut buf = buf_state.0.lock().unwrap();
@@ -166,8 +185,11 @@ fn start_recording(app: &AppHandle, is_toggle: bool) {
                     }
                 }
 
-                // Drop the stream before triggering transcription
+                // Pause then drop the stream before triggering transcription
+                audio::stop_stream(&_stream);
                 drop(_stream);
+                // Give CoreAudio time to fully release the audio unit
+                std::thread::sleep(std::time::Duration::from_millis(50));
 
                 if auto_stopped {
                     // Clear the stream handle so stop_and_transcribe won't try to join us
@@ -182,7 +204,11 @@ fn start_recording(app: &AppHandle, is_toggle: bool) {
                 // Block until stop signal (sender dropped or explicit send)
                 let _ = stop_rx.recv();
             }
-            // _stream is dropped here, on this thread
+            // Explicitly pause before drop to give CoreAudio clean shutdown
+            audio::stop_stream(&_stream);
+            drop(_stream);
+            // Brief delay for CoreAudio resource release
+            std::thread::sleep(std::time::Duration::from_millis(50));
         })
         .expect("failed to spawn audio-keeper thread");
 
@@ -225,8 +251,16 @@ fn stop_and_transcribe(app: &AppHandle) {
 
     state_guard.transition(AppState::Transcribing, app);
 
-    // Snapshot the captured samples (audio-keeper is guaranteed stopped)
-    let raw_samples = app.state::<ActiveBufferState>().0.lock().unwrap().clone();
+    // Snapshot the captured samples (audio-keeper is guaranteed stopped), then
+    // clear the buffer immediately so memory is freed while transcription runs.
+    let raw_samples = {
+        let buf_state = app.state::<ActiveBufferState>();
+        let mut buf = buf_state.0.lock().unwrap();
+        let snapshot = buf.clone();
+        buf.clear();
+        buf.shrink_to(0);
+        snapshot
+    };
     log::debug!("[PTT] buffer snapshot: {} samples", raw_samples.len());
 
     // Resample to 16kHz if the device used a different rate

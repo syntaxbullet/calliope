@@ -131,6 +131,16 @@ pub fn start_recording(
     Some(stream)
 }
 
+/// Explicitly pause a stream before dropping it.
+/// On macOS, this gives CoreAudio a chance to cleanly stop its audio unit
+/// before disposal, preventing resource leaks on rapid record cycles.
+pub fn stop_stream(stream: &cpal::Stream) {
+    use cpal::traits::StreamTrait;
+    if let Err(e) = stream.pause() {
+        log::warn!("audio: failed to pause stream before drop: {e}");
+    }
+}
+
 /// Resample audio from `from_rate` to `to_rate`.
 ///
 /// Uses rubato's windowed-sinc resampler with proper anti-aliasing.

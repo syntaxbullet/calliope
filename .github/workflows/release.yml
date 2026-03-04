@@ -44,7 +44,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ggerganov/whisper.cpp
-          ref: v1.7.5
+          ref: v1.8.3
           path: whisper.cpp
 
       - name: Install aarch64 cross-compilation toolchain
@@ -141,7 +141,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ggerganov/whisper.cpp
-          ref: v1.7.5
+          ref: v1.8.3
           path: whisper.cpp
 
       - name: Install CUDA Toolkit (Windows)

@@ -185,7 +185,11 @@ jobs:
         run: |
           cd whisper.cpp
           rm -rf build
-          cmake -B build ${{ matrix.cmake_flags }} -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+          EXTRA_FLAGS=""
+          if [ "${{ matrix.backend }}" = "cuda" ] && [ "${{ runner.os }}" = "Windows" ]; then
+            EXTRA_FLAGS="-DCMAKE_CUDA_COMPILER=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.6/bin/nvcc.exe\" -DCUDAToolkit_ROOT=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.6\""
+          fi
+          eval cmake -B build ${{ matrix.cmake_flags }} $EXTRA_FLAGS -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
           cmake --build build --config Release --target whisper-cli -j $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
         shell: bash
 
